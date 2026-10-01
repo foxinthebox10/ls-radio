@@ -367,8 +367,8 @@ let lastMeta = "";
 function setMeta(tr) {
   if (!("mediaSession" in navigator) || isYT() || !list().length) return;
   const st = list()[here()];
-  const title = tr ? dec(tr[3] || tr[2]) : st.link ? "DJ, ads and idents" : st.name;
   const artist = tr && tr[3] ? dec(tr[2]) : "";
+  const title = tr ? dec(tr[3] || tr[2]) + (artist ? " – " + artist : "") : st.link ? "DJ, ads and idents" : st.name;
   const k = st.sid + "|" + title;
   if (k === lastMeta) return;
   lastMeta = k;
