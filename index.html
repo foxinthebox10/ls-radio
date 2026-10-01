@@ -91,6 +91,9 @@ body.editing .row small{display:none}
 body.editing .row .tick{display:block}
 body.editing .row:not(.dropped) .tick{background:var(--amber);border-color:var(--amber);box-shadow:inset 0 0 0 3px var(--panel)}
 body.editing .row.dropped .nm{color:var(--dim)}
+.row .linkto{flex:none;width:118px;font:inherit;font-size:12px;color:var(--fg);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:6px 4px;margin-right:6px}
+.row .linkto:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
+body.editing .row{flex-wrap:wrap}
 .row .rm{font:inherit;font-size:12px;color:var(--warn);background:none;border:1px solid var(--line);border-radius:8px;padding:6px 10px;margin-right:6px;cursor:pointer}
 .row .pick:focus-visible,.row .rm:focus-visible,.modes button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
 .modes{display:flex;gap:4px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:4px;margin-bottom:10px;flex:none}
@@ -431,7 +434,7 @@ function renderList() {
     b.hidden = (q && !st.name.toLowerCase().includes(q)) || (!editing && dropped);
     b.innerHTML = `<button type="button" class="pick"><span class="n"></span><span class="nm"></span><small></small><i class="tick" aria-hidden="true"></i></button>`;
     b.querySelector(".n").textContent = String(i + 1).padStart(2, "0");
-    b.querySelector(".nm").textContent = st.name;
+    b.querySelector(".nm").textContent = (editing && st.file && st.link) ? st.name + " · " + st.file : st.name;
     const pick = b.querySelector(".pick");
     pick.setAttribute("aria-pressed", editing ? String(!dropped) : "false");
     pick.onclick = () => {
@@ -439,6 +442,13 @@ function renderList() {
       else tune(i);
     };
     if (editing && !isYT()) {
+      const pickSt = document.createElement("select");
+      pickSt.className = "linkto"; pickSt.setAttribute("aria-label", "Station for " + st.file);
+      pickSt.innerHTML = '<option value="">Own station</option>' + YTLIST.map(() => "<option></option>").join("");
+      YTLIST.forEach((y, k) => { pickSt.options[k + 1].value = y.sid; pickSt.options[k + 1].textContent = y.name; });
+      pickSt.value = st.link || "";
+      pickSt.onchange = e => linkFile(st.sid, e.target.value);
+      b.appendChild(pickSt);
       const x = document.createElement("button");
       x.type = "button"; x.className = "rm"; x.textContent = "Remove"; x.setAttribute("aria-label", "Remove " + st.name);
       x.onclick = () => removeFile(st.sid);
@@ -452,7 +462,7 @@ function renderList() {
   $("edit").hidden = !L.length;
   $("edithelp").hidden = !editing;
   $("edithelp").textContent = isYT() ? "Untick stations to drop them from ⏪️ ⏩️. Tap Done when finished."
-                                     : "Untick to drop from ⏪️ ⏩️, or Remove to delete from this phone. Tap Done when finished.";
+                                     : "Pick which station each file is (for song names), untick to drop from ⏪️ ⏩️, or Remove. Tap Done when finished.";
 }
 
 // ---------- My files storage (IndexedDB, stays on this phone) ----------
@@ -478,7 +488,11 @@ async function loadFiles() {
     const rows = await idb("readonly", st => st.getAll());
     rows.sort((a, b) => a.added - b.added);
     FILES.forEach(f => URL.revokeObjectURL(f.url));
-    FILES = rows.map(r => ({sid: r.sid, name: r.name, len: r.len, url: URL.createObjectURL(r.blob), tracks: []}));
+    FILES = rows.map(r => {
+      const yt = r.link && YTLIST.find(y => y.sid === r.link);
+      return {sid: r.sid, file: r.name, link: yt ? yt.sid : "", name: yt ? yt.name : r.name, len: r.len,
+              url: URL.createObjectURL(r.blob), tracks: yt ? yt.tracks : []};
+    });
   } catch (e) { FILES = []; setHint("Couldn't open saved files on this device.", true); }
   if (M().last >= FILES.length && S.mode === "files") { S.files.last = 0; S.files.cur = null; }
 }
@@ -501,8 +515,9 @@ async function addFiles(fileList) {
   for (const f of files) {
     const len = await duration(f);
     if (len < 0) { bad++; continue; }
+    const base = f.name.replace(/\.[^.]+$/, "");
     const rec = {sid: "f" + Date.now().toString(36) + Math.random().toString(36).slice(2, 7),
-                 name: f.name.replace(/\.[^.]+$/, ""), len, blob: f, added: Date.now() + added};
+                 name: base, len, blob: f, added: Date.now() + added, link: guessStation(base)};
     try { await idb("readwrite", st => st.put(rec)); added++; }
     catch (e) { setHint("Your phone ran out of space for this app. Remove some stations and try again.", true); break; }
   }
@@ -510,6 +525,27 @@ async function addFiles(fileList) {
   paint(true); updateSession();
   if (added) setHint(`Added ${added} station${added > 1 ? "s" : ""}.` + (bad ? ` ${bad} file${bad > 1 ? "s" : ""} couldn't be read.` : ""));
   else if (bad) setHint("Those files couldn't be read as audio.", true);
+}
+function guessStation(fname) {
+  const byId = YTLIST.find(y => fname.includes(y.vid));
+  if (byId) return byId.sid;
+  const norm = x => x.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  const n = norm(fname);
+  const byName = [...YTLIST].sort((a, b) => b.name.length - a.name.length).find(y => n.includes(norm(y.name)));
+  return byName ? byName.sid : "";
+}
+async function linkFile(sid, link) {
+  const d = await db();
+  await new Promise((res, rej) => {
+    const tx = d.transaction("files", "readwrite"), st = tx.objectStore("files"), g = st.get(sid);
+    g.onsuccess = () => { if (g.result) { g.result.link = link; st.put(g.result); } };
+    tx.oncomplete = res; tx.onerror = () => rej(tx.error);
+  });
+  const curSid = S.files.cur !== null && FILES[S.files.cur] ? FILES[S.files.cur].sid : null;
+  const f = FILES.find(x => x.sid === sid), yt = YTLIST.find(y => y.sid === link);
+  if (f) { f.link = link; f.name = yt ? yt.name : f.file; f.tracks = yt ? yt.tracks : []; }
+  if (curSid) S.files.cur = FILES.findIndex(x => x.sid === curSid);
+  paint(); updateSession();
 }
 async function removeFile(sid) {
   const curSid = M().cur !== null && FILES[M().cur] ? FILES[M().cur].sid : null;
