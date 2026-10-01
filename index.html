@@ -125,7 +125,7 @@ body.spinning .disc{animation:spin 3s linear infinite}
 </header>
 <div class="modes" role="tablist" aria-label="Source">
   <button id="m-yt" role="tab" type="button">YouTube stations</button>
-  <button id="m-files" role="tab" type="button">My files</button>
+  <button id="m-files" role="tab" type="button">Custom</button>
 </div>
 
 <section class="unit" aria-label="Player">
@@ -407,7 +407,7 @@ function paint(scroll) {
   $("stickrow").hidden = !(isYT() && i === MP);
   $("stick").value = S.stick;
   if (empty) {
-    $("num").textContent = "My files"; $("name").textContent = "No stations yet";
+    $("num").textContent = "Custom"; $("name").textContent = "No stations yet";
     $("artist").textContent = ""; $("song").textContent = "Tap + Add to pick audio files";
     $("tcur").textContent = $("tlen").textContent = "0:00"; $("fill").style.width = "0";
   } else {
@@ -440,7 +440,7 @@ function tick() {
     $("tcur").textContent = fmt(t - tr[0]); $("tlen").textContent = fmt(tr[1] - tr[0]);
     $("fill").style.width = Math.min(100, (t - tr[0]) / (tr[1] - tr[0]) * 100) + "%";
   } else {
-    $("artist").textContent = M().cur === null ? "" : isYT() ? "On air" : "My files";
+    $("artist").textContent = M().cur === null ? "" : isYT() ? "On air" : st.shared ? "Custom station" : "My files";
     $("song").textContent = M().cur === null ? "Tap ▶ or a station to tune in" : (isYT() || st.link) ? between(st) : st.name;
     $("tcur").textContent = fmt(t - a); $("tlen").textContent = fmt(b - a);
     $("fill").style.width = (b > a ? Math.min(100, (t - a) / (b - a) * 100) : 0) + "%";
@@ -472,7 +472,7 @@ function renderList() {
       if (editing) { if (M().off[st.sid]) delete M().off[st.sid]; else M().off[st.sid] = true; save(); paint(); }
       else tune(i);
     };
-    if (editing && !isYT()) {
+    if (editing && !isYT() && !st.shared) {
       const pickSt = document.createElement("select");
       pickSt.className = "linkto"; pickSt.setAttribute("aria-label", "Station for " + st.file);
       pickSt.innerHTML = '<option value="">Own station</option>' + YTLIST.map(() => "<option></option>").join("");
@@ -518,12 +518,18 @@ async function loadFiles() {
   try {
     const rows = await idb("readonly", st => st.getAll());
     rows.sort((a, b) => a.added - b.added);
-    FILES.forEach(f => URL.revokeObjectURL(f.url));
-    FILES = rows.map(r => {
+    FILES.forEach(f => { if (!f.shared) URL.revokeObjectURL(f.url); });
+    let shared = [];                                           // stations everyone gets, hosted with the app
+    try {
+      const r = await fetch("shared/stations.json", {cache: "no-cache"});
+      if (r.ok) shared = (await r.json()).map(x => ({sid: "s:" + x.file, file: x.file, name: x.name, len: x.len, shared: true,
+        url: "shared/" + encodeURIComponent(x.file), tracks: x.tracks || [], logo: x.logo ? "shared/" + x.logo : ""}));
+    } catch (e) {}
+    FILES = shared.concat(rows.map(r => {
       const yt = r.link && YTLIST.find(y => y.sid === r.link);
       return {sid: r.sid, file: r.name, link: yt ? yt.sid : "", name: yt ? yt.name : r.name, len: r.len,
               url: URL.createObjectURL(r.blob), tracks: yt ? yt.tracks : [], logo: yt ? yt.logo : ""};
-    });
+    }));
   } catch (e) { FILES = []; setHint("Couldn't open saved files on this device.", true); }
   if (M().last >= FILES.length && S.mode === "files") { S.files.last = 0; S.files.cur = null; }
 }
