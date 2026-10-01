@@ -660,9 +660,9 @@ async function publish(st) {
     }
     await gh(`/contents/incoming/${id}/meta.json`, {method: "PUT", body: JSON.stringify({message: "upload done", branch: br,
       content: btoa(unescape(encodeURIComponent(JSON.stringify({action: "publish", link: st.link || "", title: st.file}))))})});
-    setHint(`Uploaded. GitHub is converting it now; it'll appear for everyone at the top of Custom in about 5 minutes.`);
+    setHint(`Uploaded. GitHub is converting it now; it'll appear for everyone at the top of Custom in about 5 minutes.`); alert("Uploaded! It will appear for everyone in about 5 minutes.");
   } catch (e) {
-    setHint("Publishing failed (" + e.message + "). Try again.", true);
+    setHint("Publishing failed (" + e.message + "). Try again.", true); alert("Publishing failed: " + e.message);
     gh("/git/refs/heads/" + br, {method: "DELETE"}).catch(() => {});
   }
   busy = false;
