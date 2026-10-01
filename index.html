@@ -625,7 +625,7 @@ const owner = () => { try { return localStorage.getItem("lsradio.token") || ""; 
 async function gh(path, opt = {}) {
   const r = await fetch(GH + path, Object.assign({}, opt, {headers: {Authorization: "Bearer " + owner(), Accept: "application/vnd.github+json",
     "Content-Type": "application/json"}}));
-  if (!r.ok) throw new Error(r.status + " " + ((await r.text()).match(/"message":"([^"]+)/) || [, ""])[1]);
+  if (!r.ok) { let m = ""; try { m = (await r.json()).message || ""; } catch (e) {} throw new Error((r.status + " " + m).trim()); }
   return r.status === 204 ? null : r.json();
 }
 $("ownerlink").onclick = async () => {
@@ -647,17 +647,26 @@ async function publish(st) {
   const where = st.link ? "as " + st.name : "as its own station (" + st.file + ")";
   if (!confirm("Publish this file " + where + " for everyone who opens the app?\n\nOnly publish audio you have the rights to share.")) return;
   busy = true;
-  const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6), br = "upload-" + id, CH = 40 * 1024 * 1024;
+  const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6), br = "upload-" + id, CH = 8 * 1024 * 1024;
   const n = Math.ceil(row.blob.size / CH);
   try {
-    const main = await gh("/git/ref/heads/main");
-    await gh("/git/refs", {method: "POST", body: JSON.stringify({ref: "refs/heads/" + br, sha: main.object.sha})});
+    let stage = "starting upload";
+    const step = async (what, fn) => { stage = what; for (let t = 0; ; t++) { try { return await fn(); }
+      catch (e) { if (t >= 2 || /^(401|403|404)/.test(e.message)) throw e; await new Promise(r => setTimeout(r, 2000 * (t + 1))); } } };
+    try {
+    const main = await step("reading the repo", () => gh("/git/ref/heads/main"));
+    await step("starting upload", () => gh("/git/refs", {method: "POST", body: JSON.stringify({ref: "refs/heads/" + br, sha: main.object.sha})}));
     for (let k = 0; k < n; k++) {
       setHint(`Uploading ${st.name}… ${Math.round(k / n * 100)}% (keep this screen open)`);
       const content = await b64(row.blob.slice(k * CH, (k + 1) * CH));
-      await gh(`/contents/incoming/${id}/part${String(k).padStart(3, "0")}`, {method: "PUT",
-        body: JSON.stringify({message: "upload part " + k, content, branch: br})});
+      const path = `/contents/incoming/${id}/part${String(k).padStart(3, "0")}`;
+      await step(`uploading piece ${k + 1} of ${n}`, async () => {
+        try { await gh(path, {method: "PUT", body: JSON.stringify({message: "upload part " + k, content, branch: br})}); }
+        catch (e) { if (/^422/.test(e.message)) { try { await gh(path + "?ref=" + br); return; } catch (x) {} } throw e; }
+      });
     }
+    stage = "finishing";
+    } catch (e) { throw new Error(e.message + " while " + stage); }
     await gh(`/contents/incoming/${id}/meta.json`, {method: "PUT", body: JSON.stringify({message: "upload done", branch: br,
       content: btoa(unescape(encodeURIComponent(JSON.stringify({action: "publish", link: st.link || "", title: st.file}))))})});
     setHint(`Uploaded. GitHub is converting it now; it'll appear for everyone at the top of Custom in about 5 minutes.`); alert("Uploaded! It will appear for everyone in about 5 minutes.");
