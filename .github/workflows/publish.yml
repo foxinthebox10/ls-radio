@@ -4,10 +4,10 @@ name: publish-station
 on:
   push:
     branches: ["upload-*"]
-concurrency: {group: publish, cancel-in-progress: false}
 jobs:
   run:
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     permissions: {contents: write}
     steps:
       - uses: actions/checkout@v4
@@ -35,7 +35,11 @@ jobs:
             python3 -c "import json;p='shared/stations.json';d=json.load(open(p));json.dump([x for x in d if x.get('id')!='$T'],open(p,'w'),indent=1)"
             git rm -q --ignore-unmatch "shared/$T.m4a"; MSG="Remove station $T"
           else
-            sudo apt-get -qq update >/dev/null && sudo apt-get -qq install -y ffmpeg >/dev/null
+            if ! command -v ffmpeg >/dev/null; then
+              curl -sSL https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz | tar -xJ -C /tmp
+              export PATH="$(ls -d /tmp/ffmpeg-*-static):$PATH"
+            fi
+            ffmpeg -version | head -1
             DUR=$(ffprobe -v error -show_entries format=duration -of csv=p=0 /tmp/w/src)
             BR=$(python3 -c "print(max(48, min(128, int(95*8*1000/float('$DUR')))))")
             ffmpeg -loglevel error -y -i /tmp/w/src -vn -c:a aac -b:a ${BR}k -movflags +faststart "shared/$ID.m4a"
@@ -51,7 +55,8 @@ jobs:
             ls -la shared
           fi
           git config user.name "LS Radio" && git config user.email "bot@users.noreply.github.com"
-          git add shared && git commit -qm "$MSG" && git push -q origin main
+          git add shared && git commit -qm "$MSG"
+          for n in 1 2 3 4 5; do git push -q origin main && break; sleep $((n*3)); git pull -q --rebase origin main; done
       - name: Clean up upload
         if: steps.req.outputs.go == 'yes'
         run: git push -q origin --delete "$GITHUB_REF_NAME"
