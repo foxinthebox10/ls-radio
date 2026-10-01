@@ -110,6 +110,9 @@ body.editing .row{flex-wrap:wrap}
 body.spinning .disc{animation:spin 3s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
 .addbig{font:inherit;font-size:14px;color:var(--amber-ink);background:var(--amber);border:0;border-radius:10px;padding:10px 16px;cursor:pointer}
+.ownerlink{flex:none;align-self:flex-start;font:inherit;font-size:12px;color:var(--amber);background:none;border:0;padding:6px 2px;cursor:pointer;text-decoration:underline}
+.ownerlink[hidden]{display:none}
+.row .pub{color:var(--amber)}
 .addbig[hidden],.tools button[hidden]{display:none}
 .art{width:96px;height:96px;border-radius:50%;object-fit:cover;background:#000;box-shadow:0 0 0 2px var(--amber);flex:none}
 .art[hidden],.disc[hidden]{display:none}
@@ -163,6 +166,7 @@ body.spinning .disc{animation:spin 3s linear infinite}
 </div>
 <input id="picker" type="file" accept="audio/*,.mp3,.m4a,.aac,.wav,.flac,.ogg" multiple hidden>
 <p class="edithelp" id="edithelp" hidden></p>
+<button type="button" class="ownerlink" id="ownerlink" hidden></button>
 <nav class="list" id="list" aria-label="Stations"></nav>
 <audio id="audio" preload="auto" playsinline></audio>
 
@@ -472,6 +476,18 @@ function renderList() {
       if (editing) { if (M().off[st.sid]) delete M().off[st.sid]; else M().off[st.sid] = true; save(); paint(); }
       else tune(i);
     };
+    if (editing && !isYT() && st.shared && owner()) {
+      const x = document.createElement("button");
+      x.type = "button"; x.className = "rm"; x.textContent = "Unpublish"; x.setAttribute("aria-label", "Unpublish " + st.name);
+      x.onclick = () => unpublish(st);
+      b.appendChild(x);
+    }
+    if (editing && !isYT() && !st.shared && owner()) {
+      const x = document.createElement("button");
+      x.type = "button"; x.className = "rm pub"; x.textContent = "Publish"; x.setAttribute("aria-label", "Publish " + st.name + " for everyone");
+      x.onclick = () => publish(st);
+      b.appendChild(x);
+    }
     if (editing && !isYT() && !st.shared) {
       const pickSt = document.createElement("select");
       pickSt.className = "linkto"; pickSt.setAttribute("aria-label", "Station for " + st.file);
@@ -493,7 +509,9 @@ function renderList() {
   $("edit").hidden = !L.length;
   $("edithelp").hidden = !editing;
   $("edithelp").textContent = isYT() ? "Untick stations to drop them from ⏪️ ⏩️. Tap Done when finished."
-                                     : "Pick which station each file is (for song names), untick to drop from ⏪️ ⏩️, or Remove. Tap Done when finished.";
+                                     : "Pick which station each file is, untick to drop from ⏪️ ⏩️, or Remove. Tap Done when finished.";
+  $("ownerlink").hidden = !(editing && !isYT());
+  $("ownerlink").textContent = owner() ? "Publishing is on for this phone · turn off" : "Publish stations for everyone…";
 }
 
 // ---------- My files storage (IndexedDB, stays on this phone) ----------
@@ -522,8 +540,11 @@ async function loadFiles() {
     let shared = [];                                           // stations everyone gets, hosted with the app
     try {
       const r = await fetch("shared/stations.json", {cache: "no-cache"});
-      if (r.ok) shared = (await r.json()).map(x => ({sid: "s:" + x.file, file: x.file, name: x.name, len: x.len, shared: true,
-        url: "shared/" + encodeURIComponent(x.file), tracks: x.tracks || [], logo: x.logo ? "shared/" + x.logo : ""}));
+      if (r.ok) shared = (await r.json()).map(x => {
+        const yt = x.link && YTLIST.find(y => y.sid === x.link);
+        return {sid: "s:" + x.id, id: x.id, file: x.title, link: yt ? yt.sid : "", name: yt ? yt.name : x.title, len: x.len, shared: true,
+                url: "shared/" + x.file, tracks: [], logo: yt ? yt.logo : ""};
+      });
     } catch (e) {}
     FILES = shared.concat(rows.map(r => {
       const yt = r.link && YTLIST.find(y => y.sid === r.link);
@@ -594,6 +615,68 @@ async function removeFile(sid) {
   if (idx >= 0) S.files.cur = S.files.last = idx;
   else if (S.files.last >= FILES.length) S.files.last = 0;
   save(); paint(); updateSession();
+}
+
+// ---------- Publishing (owner only) ----------
+// Your phone sends the file to the app's GitHub repo in 40 MB pieces; a GitHub job joins them, converts to M4A
+// and adds it to shared/stations.json so everyone sees it. Needs a GitHub token, kept only on this phone.
+const REPO = "foxinthebox10/ls-radio", GH = "https://api.github.com/repos/" + REPO;
+const owner = () => { try { return localStorage.getItem("lsradio.token") || ""; } catch (e) { return ""; } };
+async function gh(path, opt = {}) {
+  const r = await fetch(GH + path, Object.assign({}, opt, {headers: {Authorization: "Bearer " + owner(), Accept: "application/vnd.github+json",
+    "Content-Type": "application/json"}}));
+  if (!r.ok) throw new Error(r.status + " " + ((await r.text()).match(/"message":"([^"]+)/) || [, ""])[1]);
+  return r.status === 204 ? null : r.json();
+}
+$("ownerlink").onclick = async () => {
+  if (owner()) { if (confirm("Turn off publishing on this phone? (Forgets the GitHub token.)")) { localStorage.removeItem("lsradio.token"); paint(); } return; }
+  const t = prompt("Paste a GitHub token for " + REPO + " (fine-grained, only this repo, Contents: read and write). It stays on this phone only.");
+  if (!t) return;
+  localStorage.setItem("lsradio.token", t.trim());
+  try { await gh(""); setHint("Publishing is on. Tap Publish on a file to share it with everyone."); }
+  catch (e) { localStorage.removeItem("lsradio.token"); setHint("That token didn't work (" + e.message + ").", true); }
+  paint();
+};
+const b64 = blob => new Promise((res, rej) => { const f = new FileReader();
+  f.onload = () => res(f.result.slice(f.result.indexOf(",") + 1)); f.onerror = () => rej(f.error); f.readAsDataURL(blob); });
+let busy = false;
+async function publish(st) {
+  if (busy) return;
+  const row = (await idb("readonly", s => s.get(st.sid)));
+  if (!row) return;
+  const where = st.link ? "as " + st.name : "as its own station (" + st.file + ")";
+  if (!confirm("Publish this file " + where + " for everyone who opens the app?\n\nOnly publish audio you have the rights to share.")) return;
+  busy = true;
+  const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6), br = "upload-" + id, CH = 40 * 1024 * 1024;
+  const n = Math.ceil(row.blob.size / CH);
+  try {
+    const main = await gh("/git/ref/heads/main");
+    await gh("/git/refs", {method: "POST", body: JSON.stringify({ref: "refs/heads/" + br, sha: main.object.sha})});
+    for (let k = 0; k < n; k++) {
+      setHint(`Uploading ${st.name}… ${Math.round(k / n * 100)}% (keep this screen open)`);
+      const content = await b64(row.blob.slice(k * CH, (k + 1) * CH));
+      await gh(`/contents/incoming/${id}/part${String(k).padStart(3, "0")}`, {method: "PUT",
+        body: JSON.stringify({message: "upload part " + k, content, branch: br})});
+    }
+    await gh(`/contents/incoming/${id}/meta.json`, {method: "PUT", body: JSON.stringify({message: "upload done", branch: br,
+      content: btoa(unescape(encodeURIComponent(JSON.stringify({action: "publish", link: st.link || "", title: st.file}))))})});
+    setHint(`Uploaded. GitHub is converting it now; it'll appear for everyone at the top of Custom in about 5 minutes.`);
+  } catch (e) {
+    setHint("Publishing failed (" + e.message + "). Try again.", true);
+    gh("/git/refs/heads/" + br, {method: "DELETE"}).catch(() => {});
+  }
+  busy = false;
+}
+async function unpublish(st) {
+  if (!confirm("Remove " + st.name + " for everyone?")) return;
+  try {
+    const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6), br = "upload-" + id;
+    const main = await gh("/git/ref/heads/main");
+    await gh("/git/refs", {method: "POST", body: JSON.stringify({ref: "refs/heads/" + br, sha: main.object.sha})});
+    await gh(`/contents/incoming/${id}/meta.json`, {method: "PUT", body: JSON.stringify({message: "remove", branch: br,
+      content: btoa(JSON.stringify({action: "remove", target: st.id}))})});
+    setHint("Removing it for everyone. It'll be gone in a couple of minutes.");
+  } catch (e) { setHint("Couldn't remove it (" + e.message + ").", true); }
 }
 
 // ---------- Switching source ----------

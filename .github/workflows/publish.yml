@@ -1,0 +1,57 @@
+name: publish-station
+# The app pushes a branch upload-<id> with incoming/<id>/part000… and finally incoming/<id>/meta.json.
+# Once meta.json is there, this joins the parts, converts to M4A, adds it to shared/stations.json on main, and deletes the branch.
+on:
+  push:
+    branches: ["upload-*"]
+concurrency: {group: publish, cancel-in-progress: false}
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    permissions: {contents: write}
+    steps:
+      - uses: actions/checkout@v4
+        with: {fetch-depth: 1}
+      - name: Read request
+        id: req
+        run: |
+          ID="${GITHUB_REF_NAME#upload-}"
+          [[ "$ID" =~ ^[a-z0-9]+$ ]] || { echo "bad id"; exit 1; }
+          M="incoming/$ID/meta.json"
+          if [ ! -f "$M" ]; then echo "still uploading"; echo "go=no" >> $GITHUB_OUTPUT; exit 0; fi
+          echo "go=yes" >> $GITHUB_OUTPUT; echo "id=$ID" >> $GITHUB_OUTPUT
+          mkdir -p /tmp/w && cp "$M" /tmp/w/meta.json
+          if ls incoming/$ID/part* >/dev/null 2>&1; then cat $(ls incoming/$ID/part* | sort) > /tmp/w/src; fi
+      - name: Apply to main
+        if: steps.req.outputs.go == 'yes'
+        env: {ID: "${{ steps.req.outputs.id }}"}
+        run: |
+          set -e
+          git fetch -q --depth=1 origin main && git checkout -q -B main origin/main
+          mkdir -p shared; [ -f shared/stations.json ] || echo '[]' > shared/stations.json
+          ACTION=$(python3 -c "import json;print(json.load(open('/tmp/w/meta.json')).get('action','publish'))")
+          if [ "$ACTION" = remove ]; then
+            T=$(python3 -c "import json,re;t=json.load(open('/tmp/w/meta.json'))['target'];assert re.fullmatch('[a-z0-9]+',t);print(t)")
+            python3 -c "import json;p='shared/stations.json';d=json.load(open(p));json.dump([x for x in d if x.get('id')!='$T'],open(p,'w'),indent=1)"
+            git rm -q --ignore-unmatch "shared/$T.m4a"; MSG="Remove station $T"
+          else
+            sudo apt-get -qq update >/dev/null && sudo apt-get -qq install -y ffmpeg >/dev/null
+            DUR=$(ffprobe -v error -show_entries format=duration -of csv=p=0 /tmp/w/src)
+            BR=$(python3 -c "print(max(48, min(128, int(95*8*1000/float('$DUR')))))")
+            ffmpeg -loglevel error -y -i /tmp/w/src -vn -c:a aac -b:a ${BR}k -movflags +faststart "shared/$ID.m4a"
+            LEN=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "shared/$ID.m4a")
+            python3 - <<PY
+          import json
+          m=json.load(open('/tmp/w/meta.json')); p='shared/stations.json'; d=json.load(open(p))
+          d=[x for x in d if x.get('id')!='$ID']
+          d.append({'id':'$ID','file':'$ID.m4a','link':str(m.get('link',''))[:80],'title':str(m.get('title',''))[:120],'len':round(float('$LEN'))})
+          json.dump(d,open(p,'w'),indent=1)
+          PY
+            MSG="Publish station: $(python3 -c "import json;m=json.load(open('/tmp/w/meta.json'));print(m.get('link') or m.get('title'))")"
+            ls -la shared
+          fi
+          git config user.name "LS Radio" && git config user.email "bot@users.noreply.github.com"
+          git add shared && git commit -qm "$MSG" && git push -q origin main
+      - name: Clean up upload
+        if: steps.req.outputs.go == 'yes'
+        run: git push -q origin --delete "$GITHUB_REF_NAME"
