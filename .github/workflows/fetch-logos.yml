@@ -1,0 +1,22 @@
+name: fetch-logos
+on: push
+jobs:
+  fetch:
+    if: contains(github.event.head_commit.message, '[fetch-logos]')
+    runs-on: ubuntu-latest
+    permissions: { contents: write }
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          mkdir -p _src logos
+          curl -sSL -o _src/GTRV.js https://grandtheftrad.io/V/js/GTRV.js
+          curl -sSL -o _src/GTRV.css https://grandtheftrad.io/V/css/GTRV.css
+          curl -sSL -o logos/sheet.png https://grandtheftrad.io/V/icon/138808.png
+          curl -sSL -o logos/PMR.png https://grandtheftrad.io/V/icon/PMR.png
+          curl -sSL -o logos/musiclocker.png https://media-rockstargames-com.akamaized.net/rockstargames-newsite/img/meta-icons/musiclocker/favicon-180x180.png
+          curl -sSL -o logos/motomami.webp "https://is1-ssl.mzstatic.com/image/thumb/SG-MQ-US-032-Image000001/v4/86/2c/e8/862ce8bb-292a-c091-9f79-b0cc378b0ce7/image/305x305cc.webp"
+          curl -sSL -A "Mozilla/5.0" -o logos/kult.svg https://static.wikia.nocookie.net/gtawiki/images/6/61/KultFM-GTAO-Logo.svg
+          curl -sSL -A "Mozilla/5.0" -o logos/stillslipping.svg https://static.wikia.nocookie.net/gtawiki/images/8/8e/StillSlippingLS-GTAO-Logo.svg
+          ls -la _src logos
+          git config user.name bot && git config user.email bot@users.noreply.github.com
+          git add _src logos && git commit -m "Fetched logos" && git push
