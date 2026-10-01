@@ -80,11 +80,12 @@ header{display:flex;justify-content:space-between;align-items:center;padding-blo
 .row .pick{flex:1;min-width:0;display:grid;grid-template-columns:28px 1fr auto;gap:10px;align-items:center;text-align:left;
   font:inherit;font-size:14px;color:var(--fg);background:none;border:0;padding:13px 8px;cursor:pointer}
 .row .nm{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.row .n{color:var(--dim);font-size:11px;font-variant-numeric:tabular-nums}
+.row .n{width:28px;height:28px;border-radius:50%;object-fit:cover;background:#000;display:block}
 .row small{color:var(--dim);font-size:11px;font-variant-numeric:tabular-nums}
 .row.on{background:#2a2112;border-radius:10px;border-color:transparent}
 .row.on .pick{color:var(--amber);font-weight:600}
-.row.on .n,.row.on small{color:var(--amber)}
+.row.on small{color:var(--amber)}
+.row.on .n{box-shadow:0 0 0 2px var(--amber)}
 .row .tick{display:none;width:20px;height:20px;border-radius:50%;border:2px solid var(--dim)}
 body.editing .row .pick{grid-template-columns:28px 1fr 22px}
 body.editing .row small{display:none}
@@ -110,6 +111,8 @@ body.spinning .disc{animation:spin 3s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
 .addbig{font:inherit;font-size:14px;color:var(--amber-ink);background:var(--amber);border:0;border-radius:10px;padding:10px 16px;cursor:pointer}
 .addbig[hidden],.tools button[hidden]{display:none}
+.art{width:96px;height:96px;border-radius:50%;object-fit:cover;background:#000;box-shadow:0 0 0 2px var(--amber);flex:none}
+.art[hidden],.disc[hidden]{display:none}
 @media (prefers-reduced-motion:reduce){body.spinning .disc{animation:none}}
 </style>
 </head>
@@ -130,7 +133,8 @@ body.spinning .disc{animation:spin 3s linear infinite}
     <div id="ytwrap"><div id="player"></div></div>
     <div class="off" id="off">Loading YouTube player…</div>
     <div class="filescreen" id="filescreen" hidden>
-      <div class="disc" aria-hidden="true"></div>
+      <div class="disc" id="disc" aria-hidden="true"></div>
+      <img class="art" id="art" alt="" hidden>
       <div id="fsmsg"></div>
       <button type="button" class="addbig" id="addbig">+ Add audio files</button>
     </div>
@@ -172,7 +176,8 @@ const STICKS = [
   ["Blue EP", 1, 1760], ["Green EP", 1761, 3603], ["Violet EP", 3604, 5920], ["Black EP", 5921, 7883],
   ["CLR Launch Party (Seth Troxler)", 7884, 12154], ["Kenny's Backyard Boogie", 12155, 20979],
   ["Dr. Dre", 20980, 22265], ["Let's Get It", 22266, 22428], ["You Wanna?", 22429, 22643], ["Even the Score", 22644, 24959]];
-const YTLIST = STATIONS.map(([name, vid, len, tracks]) => ({sid: name, name, vid, len, tracks}));
+const slug = n => n.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+const YTLIST = STATIONS.map(([name, vid, len, tracks]) => ({sid: name, name, vid, len, tracks, logo: "logos/" + slug(name) + ".png"}));
 let FILES = [];                                                // {sid, name, len, url, tracks: []} from this phone
 
 const $ = id => document.getElementById(id);
@@ -351,7 +356,7 @@ function updateSession() {
   }
   const st = list()[here()];
   try { ms.metadata = new MediaMetadata({title: st.name, artist: "LS Radio", album: "My files",
-    artwork: [{src: "icon-512.png", sizes: "512x512", type: "image/png"}]}); } catch (e) {}
+    artwork: [{src: new URL(st.logo || "icon-512.png", location.href).href, sizes: "512x512", type: "image/png"}]}); } catch (e) {}
   set("play", () => { if (!playing) togglePlay(); });
   set("pause", () => { if (playing) togglePlay(); });
   set("previoustrack", () => step(-1));
@@ -387,6 +392,9 @@ function paint(scroll) {
     $("num").textContent = (M().cur === null ? "Radio off · " : "Station ") + String(i + 1).padStart(2, "0") + " / " + L.length;
     $("name").textContent = L[i].name;
   }
+  const lg = !isYT() && !empty && L[i].logo;
+  $("art").hidden = !lg; $("disc").hidden = !!lg;
+  if (lg && $("art").getAttribute("src") !== lg) $("art").src = lg;
   renderList();
   const row = !empty && $("list").children[i];
   if (row) { row.classList.add("on"); if (scroll && !row.hidden) row.scrollIntoView({block: "nearest"}); }
@@ -432,8 +440,8 @@ function renderList() {
     const b = document.createElement("div");
     b.className = "row" + (dropped ? " dropped" : "");
     b.hidden = (q && !st.name.toLowerCase().includes(q)) || (!editing && dropped);
-    b.innerHTML = `<button type="button" class="pick"><span class="n"></span><span class="nm"></span><small></small><i class="tick" aria-hidden="true"></i></button>`;
-    b.querySelector(".n").textContent = String(i + 1).padStart(2, "0");
+    b.innerHTML = `<button type="button" class="pick"><img class="n" alt="" loading="lazy"><span class="nm"></span><small></small><i class="tick" aria-hidden="true"></i></button>`;
+    b.querySelector(".n").src = st.logo || "icon-180.png";
     b.querySelector(".nm").textContent = (editing && st.file && st.link) ? st.name + " · " + st.file : st.name;
     const pick = b.querySelector(".pick");
     pick.setAttribute("aria-pressed", editing ? String(!dropped) : "false");
@@ -491,7 +499,7 @@ async function loadFiles() {
     FILES = rows.map(r => {
       const yt = r.link && YTLIST.find(y => y.sid === r.link);
       return {sid: r.sid, file: r.name, link: yt ? yt.sid : "", name: yt ? yt.name : r.name, len: r.len,
-              url: URL.createObjectURL(r.blob), tracks: yt ? yt.tracks : []};
+              url: URL.createObjectURL(r.blob), tracks: yt ? yt.tracks : [], logo: yt ? yt.logo : ""};
     });
   } catch (e) { FILES = []; setHint("Couldn't open saved files on this device.", true); }
   if (M().last >= FILES.length && S.mode === "files") { S.files.last = 0; S.files.cur = null; }
@@ -543,7 +551,7 @@ async function linkFile(sid, link) {
   });
   const curSid = S.files.cur !== null && FILES[S.files.cur] ? FILES[S.files.cur].sid : null;
   const f = FILES.find(x => x.sid === sid), yt = YTLIST.find(y => y.sid === link);
-  if (f) { f.link = link; f.name = yt ? yt.name : f.file; f.tracks = yt ? yt.tracks : []; }
+  if (f) { f.link = link; f.name = yt ? yt.name : f.file; f.tracks = yt ? yt.tracks : []; f.logo = yt ? yt.logo : ""; }
   if (curSid) S.files.cur = FILES.findIndex(x => x.sid === curSid);
   paint(); updateSession();
 }
