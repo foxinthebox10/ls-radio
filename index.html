@@ -354,14 +354,26 @@ function updateSession() {
     ["play", "pause", "previoustrack", "nexttrack"].forEach(a => set(a, null));
     return;
   }
-  const st = list()[here()];
-  try { ms.metadata = new MediaMetadata({title: st.name, artist: "LS Radio", album: "My files",
-    artwork: [{src: new URL(st.logo || "icon-512.png", location.href).href, sizes: "512x512", type: "image/png"}]}); } catch (e) {}
+  lastMeta = ""; setMeta();
   set("play", () => { if (!playing) togglePlay(); });
   set("pause", () => { if (playing) togglePlay(); });
   set("previoustrack", () => step(-1));
   set("nexttrack", () => step(1));
   set("seekbackward", null); set("seekforward", null);   // show ⏮ ⏭ instead of ±10s
+}
+
+// Lock screen text: song on top, station underneath. Changes as the songs change.
+let lastMeta = "";
+function setMeta(tr) {
+  if (!("mediaSession" in navigator) || isYT() || !list().length) return;
+  const st = list()[here()];
+  const title = tr ? dec(tr[3] || tr[2]) : st.link ? "DJ, ads and idents" : st.name;
+  const artist = tr && tr[3] ? dec(tr[2]) : "";
+  const k = st.sid + "|" + title;
+  if (k === lastMeta) return;
+  lastMeta = k;
+  try { navigator.mediaSession.metadata = new MediaMetadata({title, artist: st.name, album: artist,
+    artwork: [{src: new URL(st.logo || "icon-512.png", location.href).href, sizes: "512x512", type: "image/png"}]}); } catch (e) {}
 }
 
 function setHint(t, err) { $("hint").textContent = t; $("hint").classList.toggle("err", !!err); }
@@ -411,6 +423,7 @@ function tick() {
     if (t >= b - 0.5 || t < a - 2) { player.seekTo(a, true); t = a; }   // loop the station (or the stick)
   }
   const tr = trackAt(st, t);
+  if (M().cur !== null) setMeta(tr);
   if (tr) {
     $("artist").textContent = dec(tr[3] ? tr[2] : st.name);
     $("song").textContent = dec(tr[3] || tr[2]);
